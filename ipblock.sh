@@ -20,7 +20,7 @@ DROP_TARGET=BLOCKDROP
 PREFIX=block-
 
 send_log(){
-  echo -n "$@" | logger -s -t $SCRIPT
+  echo "$@" | logger -s -t "$SCRIPT"
 }
 
 init_ipset(){
@@ -86,19 +86,19 @@ create_chain() {
   CHAIN_NAME=$1
 
   # setup logging drop chain
-  iptables -t raw -N $CHAIN_NAME
-  iptables -t raw -F $CHAIN_NAME
+  iptables -t raw -N "${CHAIN_NAME}"
+  iptables -t raw -F "${CHAIN_NAME}"
 
-  iptables -t raw -A $CHAIN_NAME \
+  iptables -t raw -A "${CHAIN_NAME}" \
     -m limit \
     --limit 1/min \
     -j LOG \
-    --log-prefix "$LOG_PREFIX" \
+    --log-prefix "${LOG_PREFIX}" \
     --log-tcp-sequence \
     --log-tcp-options \
     --log-ip-options
 
-  iptables -t raw -A $CHAIN_NAME \
+  iptables -t raw -A "${CHAIN_NAME}" \
 	 -j DROP
 }
 
@@ -108,40 +108,40 @@ ipset_all_cidr() {
   IPSET_NAME=${PREFIX}CIDR
   CHAIN_TARGET=${DROP_TARGET}
 
-  ipset -q $CREATE $IPSET_NAME $NETHASH
-  ipset -q $DESTROY ${PREFIX}.tmp
+  ipset -q ${CREATE} ${IPSET_NAME} ${NETHASH}
+  ipset -q ${DESTROY} ${PREFIX}.tmp
 
-  (echo "$CREATE ${PREFIX}.tmp $NETHASH"
+  (echo "${CREATE} ${PREFIX}.tmp ${NETHASH}"
   sed -n "/\//s/^/$ADD ${PREFIX}.tmp /p" ${IPSET_FILE}
-  echo "COMMIT") | nice -n 15 ipset $RESTORE && ipset $SWAP ${PREFIX}.tmp $IPSET_NAME
-  iptables -t raw -nL PREROUTING | grep -q $IPSET_NAME || iptables -t raw -I PREROUTING -m set $MATCH_SET $IPSET_NAME src -j $CHAIN_TARGET
+  echo "COMMIT") | nice -n 15 ipset ${RESTORE} && ipset ${SWAP} ${PREFIX}.tmp ${IPSET_NAME}
+  iptables -t raw -nL PREROUTING | grep -q ${IPSET_NAME} || iptables -t raw -I PREROUTING -m set ${MATCH_SET} ${IPSET_NAME} src -j ${CHAIN_TARGET}
 }
 
 ipset_all_ip() {
   [ -t 1 ] && send_log "setup IPs ipset"
   
   listCount=$(wc -l <${BLOCKLIST_FILE})
-  cidrCount=$(grep "/" ${BLOCKLIST_FILE} | wc -l)
-  ipCount=$(($listCount-$cidrCount))
-  maxSet=$((($ipCount/$IPSET_MAX)+1))
+  cidrCount=$(grep -c "/" ${BLOCKLIST_FILE} )
+  ipCount=$(( listCount - cidrCount ))
+  maxSet=$((( ipCount / IPSET_MAX ) + 1))
   setCount=1
 
   send_log "Total:$listCount IPS:$ipCount NETS:$cidrCount"
 
   while [ $setCount -le $maxSet ]
   do 
-    send_log "Adding rule for ${PREFIX}IP${setCount}..."
+    send_log "adding rule for ${PREFIX}IP${setCount}..."
 
-    ipset -q $CREATE ${PREFIX}IP${setCount} $IPHASH
-    ipset -q $DESTROY ${PREFIX}.tmp
+    ipset -q ${CREATE} ${PREFIX}IP${setCount} ${IPHASH}
+    ipset -q ${DESTROY} ${PREFIX}.tmp
 
-  (echo "$CREATE ${PREFIX}.tmp $IPHASH"
-  sed -n "/\//!p" ${BLOCKLIST_FILE} | sed -n "$(((($setCount-1)*${IPSET_MAX})+1)),$(($setCount*${IPSET_MAX})) s/^/$ADD ${PREFIX}.tmp /p"
-  echo "COMMIT") | nice -n 15 ipset $RESTORE && ipset $SWAP ${PREFIX}.tmp ${PREFIX}IP${setCount}
+  (echo "${CREATE} ${PREFIX}.tmp ${IPHASH}"
+  sed -n "/\//!p" ${BLOCKLIST_FILE} | sed -n "$(((( setCount - 1) * IPSET_MAX) + 1)),$(( setCount * IPSET_MAX )) s/^/$ADD ${PREFIX}.tmp /p"
+  echo "COMMIT") | nice -n 15 ipset ${RESTORE} && ipset ${SWAP} ${PREFIX}.tmp ${PREFIX}IP${setCount}
 
-  iptables -t raw -nL PREROUTING | grep -q ${PREFIX}IP${setCount} || iptables -t raw -I PREROUTING -m set $MATCH_SET ${PREFIX}IP${setCount} src -j ${DROP_TARGET}
+  iptables -t raw -nL PREROUTING | grep -q ${PREFIX}IP${setCount} || iptables -t raw -I PREROUTING -m set ${MATCH_SET} ${PREFIX}IP${setCount} src -j ${DROP_TARGET}
 
-  msg="$msg ${PREFIX}IP${setCount} ($(expr $(ipset -L ${PREFIX}IP${setCount} | wc -l) - $ESL))"
+  msg="$msg ${PREFIX}IP${setCount} (( $(ipset -L ${PREFIX}IP${setCount} | wc -l) - ${ESL}))"
   setCount=$((setCount+1))
 
   done
@@ -152,22 +152,22 @@ clean_iptables() {
 
   for SRC in $(iptables -nL PREROUTING -t raw | sed -n "/match-set/ s/.* \(${PREFIX}.*\) .*/\1/p")
 do
-  send_log "removing ipset / iptables SRC for $SRC"
-  $(ipset -q $SWAP $SRC $SRC) && \
+  send_log "removing ipset / iptables SRC for ${SRC}"
+  ipset -q "${SWAP}" "${SRC}" "${SRC}" && \
     iptables -t raw \
       -D PREROUTING \
-      -m set $MATCH_SET $SRC src \
-      -j ${DROP_TARGET} && ipset $DESTROY $SRC
+      -m set ${MATCH_SET} "${SRC}" src \
+      -j ${DROP_TARGET} && ipset ${DESTROY} "${SRC}"
 done
 }
 
 get_lists() {
   [ -t 1 ] && send_log "get list"
 
-  ((while read -r url
+  ( (while read -r url
   do
-    nice -n 15 wget $url -qO-
-  done <${BLOCKLIST_URLS}); [ -s ${BLOCKLIST_DENY} ] && cat ${BLOCKLIST_DENY}) | \
+    nice -n 15 wget "$url" -qO-
+  done <${BLOCKLIST_URLS} ); [ -s ${BLOCKLIST_DENY} ] && cat ${BLOCKLIST_DENY}) | \
     nice -n 15 sed -n "s/\r//;s/#.*$//;/^$/d;/^[0-9,\.,\/]*$/p" | \
     nice -n 15 grep -vf ${BLOCKLIST_ALLOW} | \
     nice -n 15 awk '!a[$0]++' > ${BLOCKLIST_FILE}
@@ -175,7 +175,7 @@ get_lists() {
 
 cleanup() {
   [ -t 1 ] && send_log "cleanup"
-  ipset $DESTROY ${PREFIX}.tmp
+  ipset ${DESTROY} ${PREFIX}.tmp
   rm ${BLOCKLIST_FILE}
 }
 
@@ -194,7 +194,7 @@ main() {
   send_log "End Processing"
 }
 
-[ "$1" == "clean" ] && \
+[ "$1" = "clean" ] && \
   init_ipset && \
   clean_iptables && \
   exit 0
