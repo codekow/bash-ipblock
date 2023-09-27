@@ -1,8 +1,3 @@
 # basic lists that wont break a lot
-https://iplists.firehol.org/files/firehol_level1.netset
-https://iplists.firehol.org/files/firehol_level2.netset
-https://iplists.firehol.org/files/firehol_level3.netset
-https://iplists.firehol.org/files/firehol_webclient.netset
-#https://iplists.firehol.org/files/cybercrime.ipset
-#https://iplists.firehol.org/files/dyndns_ponmocup.ipset
-https://iplists.firehol.org/files/bds_atif.ipset
+https://github.com/DPsystems/Login-Shield/raw/master/ipset-main-nonUS.lst
+https://github.com/DPsystems/Login-Shield/raw/master/ipset-others.lst

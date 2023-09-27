@@ -16,3 +16,7 @@ chmod +x ipblock.sh
 - Put [ipblock.sh](ipblock.sh) into path (ex: /opt/usr/bin/ipblock.sh).
 
 - Modify `BLOCKLIST_DIR` in [ipblock.sh](ipblock.sh) to specfy config files location. Default is `BLOCKLIST_DIR=/opt/etc/ipblock`.
+
+## Links
+
+- [Login-Shield](https://github.com/DPsystems/Login-Shield)

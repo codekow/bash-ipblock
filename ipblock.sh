@@ -76,11 +76,21 @@ init() {
   [ ! -s ${BLOCKLIST_DENY} ] \
     && wget "${BLOCKLIST_GIT}/cfg/$(basename ${BLOCKLIST_DENY})" -qO ${BLOCKLIST_DENY}
 
-  create_chain ${DROP_TARGET}
+  create_drop_chain ${DROP_TARGET}
+  create_chain BLOCKED
+  create_jump BLOCKED
 
   init_ipset
 }
 
+create_jump(){
+  CHAIN_NAME=$1
+  JUMP="PREROUTING -i eth0 -p tcp -m multiport --dports ${PORTS} -j ${CHAIN_NAME}"
+
+  iptables -t raw -D ${JUMP}
+  iptables -t raw -I ${JUMP}
+
+}
 
 create_chain() {
   CHAIN_NAME=$1
@@ -88,6 +98,12 @@ create_chain() {
   # setup logging drop chain
   iptables -t raw -N "${CHAIN_NAME}"
   iptables -t raw -F "${CHAIN_NAME}"
+}
+
+create_drop_chain() {
+  CHAIN_NAME=$1
+
+  create_chain $1
 
   iptables -t raw -A "${CHAIN_NAME}" \
     -m limit \
