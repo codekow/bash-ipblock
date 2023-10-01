@@ -6,21 +6,55 @@
 
 # modify to specfy config / blocklist dir
 BLOCKLIST_DIR=/opt/etc/ipblock
-
-BLOCKLIST_URLS=${BLOCKLIST_DIR}/ipblock.urls 
-BLOCKLIST_ALLOW=${BLOCKLIST_DIR}/ipblock.allow
-BLOCKLIST_DENY=${BLOCKLIST_DIR}/ipblock.deny
-BLOCKLIST_GIT=https://raw.githubusercontent.com/codekow/simple-ipblock/main
+BLOCKLIST_GIT=https://raw.githubusercontent.com/codekow/simple-ipblock/dev
 BLOCKLIST_FILE=/tmp/block.list
+
+ZONE_MD5SUM=https://www.ipdeny.com/ipblocks/data/aggregated/MD5SUM
+ZONE_URL=https://www.ipdeny.com/ipblocks/data/aggregated
+ZONE_DENY="cn tw in ru br ar bg cz ca"
+ZONE_ALLOW="us"
+PORTS="22,80,443"
+
+# no vars to modify below this line
 
 SCRIPT=$0
 LOG_PREFIX="BLOCKED "
 IPSET_MAX=65535
-DROP_TARGET=BLOCKDROP
+DROP_TARGET=BLOCK-DROP
 PREFIX=block-
+TMP_DIR=$(mktemp -d -t ipblock.XXXX)
 
 send_log(){
   echo "$@" | logger -s -t "$SCRIPT"
+}
+
+
+setup_dir(){
+  mkdir -p ${BLOCKLIST_DIR} > /dev/null 2>&1 || BLOCKLIST_DIR="./ipblock" 
+
+  BLOCKLIST_URLS=${BLOCKLIST_DIR}/ipblock.urls 
+  BLOCKLIST_ALLOW=${BLOCKLIST_DIR}/ipblock.allow
+  BLOCKLIST_DENY=${BLOCKLIST_DIR}/ipblock.deny
+
+  [ ! -d ${BLOCKLIST_DIR} ] \
+    && mkdir -p ${BLOCKLIST_DIR}
+
+  [ ! -s ${BLOCKLIST_URLS} ] \
+    && curl -sL "${BLOCKLIST_GIT}/cfg/$(basename ${BLOCKLIST_URLS})" -o ${BLOCKLIST_URLS}
+
+  [ ! -s ${BLOCKLIST_ALLOW} ] \
+    && curl -sL "${BLOCKLIST_GIT}/cfg/$(basename ${BLOCKLIST_ALLOW})" -o ${BLOCKLIST_ALLOW}
+
+  [ ! -s ${BLOCKLIST_DENY} ] \
+    && curl -sL "${BLOCKLIST_GIT}/cfg/$(basename ${BLOCKLIST_DENY})" -o ${BLOCKLIST_DENY}
+}
+
+cd "${TMP_DIR}"
+
+check_root(){
+  if [ "$(id -u)" != "0" ]; then
+    echo "This script is intended to be run as root"
+  fi
 }
 
 init_ipset(){
@@ -62,37 +96,43 @@ init_ipset(){
   esac
 }
 
-init() {
+get_contries(){
 
-  [ ! -d ${BLOCKLIST_DIR} ] \
-    && mkdir -p ${BLOCKLIST_DIR}
+  curl -sL "${ZONE_MD5SUM}" -o md5sum
 
-  [ ! -s ${BLOCKLIST_URLS} ] \
-    && wget "${BLOCKLIST_GIT}/cfg/$(basename ${BLOCKLIST_URLS})" -qO ${BLOCKLIST_URLS}
+  for country in ${ZONE_DENY} ${ZONE_ALLOW}
+  do
+    curl -sL "${ZONE_URL}/${country}-aggregated.zone" -O
+  done
 
-  [ ! -s ${BLOCKLIST_ALLOW} ] \
-    && wget "${BLOCKLIST_GIT}/cfg/$(basename ${BLOCKLIST_ALLOW})" -qO ${BLOCKLIST_ALLOW}
+  md5sum -c md5sum --ignore-missing
+}
 
-  [ ! -s ${BLOCKLIST_DENY} ] \
-    && wget "${BLOCKLIST_GIT}/cfg/$(basename ${BLOCKLIST_DENY})" -qO ${BLOCKLIST_DENY}
+init(){
+  
+  setup_dir
+  get_contries
 
-  create_drop_chain ${DROP_TARGET}
+  exit 0
+
+  check_root
+  init_ipset
+
+  create_drop_chain "${DROP_TARGET}"
   create_chain BLOCKED
   create_jump BLOCKED
-
-  init_ipset
 }
 
 create_jump(){
   CHAIN_NAME=$1
   JUMP="PREROUTING -i eth0 -p tcp -m multiport --dports ${PORTS} -j ${CHAIN_NAME}"
 
-  iptables -t raw -D ${JUMP}
-  iptables -t raw -I ${JUMP}
+  iptables -t raw -D "${JUMP}"
+  iptables -t raw -I "${JUMP}"
 
 }
 
-create_chain() {
+create_chain(){
   CHAIN_NAME=$1
 
   # setup logging drop chain
@@ -100,10 +140,10 @@ create_chain() {
   iptables -t raw -F "${CHAIN_NAME}"
 }
 
-create_drop_chain() {
+create_drop_chain(){
   CHAIN_NAME=$1
 
-  create_chain $1
+  create_chain "${CHAIN_NAME}"
 
   iptables -t raw -A "${CHAIN_NAME}" \
     -m limit \
@@ -118,7 +158,7 @@ create_drop_chain() {
 	 -j DROP
 }
 
-ipset_all_cidr() {
+ipset_all_cidr(){
   [ -t 1 ] && send_log "setup CIDR ipset"
   IPSET_FILE=${BLOCKLIST_FILE}
   IPSET_NAME=${PREFIX}CIDR
@@ -133,7 +173,7 @@ ipset_all_cidr() {
   iptables -t raw -nL PREROUTING | grep -q ${IPSET_NAME} || iptables -t raw -I PREROUTING -m set ${MATCH_SET} ${IPSET_NAME} src -j ${CHAIN_TARGET}
 }
 
-ipset_all_ip() {
+ipset_all_ip(){
   [ -t 1 ] && send_log "setup IPs ipset"
   
   listCount=$(wc -l <${BLOCKLIST_FILE})
@@ -163,7 +203,7 @@ ipset_all_ip() {
   done
 }
 
-clean_iptables() {
+clean_iptables(){
   [ -t 1 ] && send_log "clean iptables"
 
   for SRC in $(iptables -nL PREROUTING -t raw | sed -n "/match-set/ s/.* \(${PREFIX}.*\) .*/\1/p")
@@ -177,25 +217,25 @@ do
 done
 }
 
-get_lists() {
+get_lists(){
   [ -t 1 ] && send_log "get list"
 
   ( (while read -r url
   do
-    nice -n 15 wget "$url" -qO-
+    nice -n 15 curl "$url" -sL
   done <${BLOCKLIST_URLS} ); [ -s ${BLOCKLIST_DENY} ] && cat ${BLOCKLIST_DENY}) | \
     nice -n 15 sed -n "s/\r//;s/#.*$//;/^$/d;/^[0-9,\.,\/]*$/p" | \
     nice -n 15 grep -vf ${BLOCKLIST_ALLOW} | \
     nice -n 15 awk '!a[$0]++' > ${BLOCKLIST_FILE}
 }
 
-cleanup() {
+cleanup(){
   [ -t 1 ] && send_log "cleanup"
   ipset ${DESTROY} ${PREFIX}.tmp
   rm ${BLOCKLIST_FILE}
 }
 
-main() {
+main(){
   send_log "Begin Processing"
 
   get_lists
