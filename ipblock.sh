@@ -7,10 +7,10 @@
 # modify to specfy config / blocklist dir
 BLOCKLIST_DIR=/opt/etc/ipblock
 BLOCKLIST_GIT=https://raw.githubusercontent.com/codekow/simple-ipblock/dev
-BLOCKLIST_FILE=custom.zone
+BLOCKLIST_FILE=00-aggregated.zone
 
 ZONE_URL=https://www.ipdeny.com/ipblocks/data/aggregated
-ZONE_DENY="cn tw in ru br ar bg cz ca custom"
+ZONE_DENY="cn tw in ru br ar bg cz ca"
 ZONE_ALLOW="us"
 PORTS="22,80,443"
 
@@ -97,9 +97,6 @@ init_ipset(){
 }
 
 create_jump(){
-  CHAIN_NAME=$1
-
-  iptables -t raw -D ${JUMP}
   iptables -t raw -I ${JUMP}
 }
 
@@ -107,26 +104,16 @@ create_chain(){
   CHAIN_NAME=$1
 
   iptables -t raw -N "${CHAIN_NAME}"
-  iptables -t raw -F "${CHAIN_NAME}"
+  iptables -t raw -A "${CHAIN_NAME}" \
+    -m limit \
+    --limit 1/min \
+    -j LOG \
+    --log-prefix "${LOG_PREFIX}" \
+    --log-tcp-sequence \
+    --log-tcp-options \
+    --log-ip-options
   iptables -t raw -A "${CHAIN_NAME}" -j DROP
 }
-
-# create_drop_chain(){
-#   CHAIN_NAME=$1
-
-#   create_chain "${CHAIN_NAME}"
-
-#   iptables -t raw -A "${CHAIN_NAME}" \
-#     -m limit \
-#     --limit 1/min \
-#     -j LOG \
-#     --log-prefix "${LOG_PREFIX}" \
-#     --log-tcp-sequence \
-#     --log-tcp-options \
-#     --log-ip-options
-
-#   iptables -t raw -A "${CHAIN_NAME}" -j DROP
-# }
 
 get_countries(){
 
@@ -178,10 +165,10 @@ init(){
   setup_dir
 
   check_root
+  clean_iptables
   init_ipset
   load_ipset
 
-  # create_drop_chain "${DROP_TARGET}"
   create_chain "${DROP_TARGET}"
   create_jump "${DROP_TARGET}"
 }
@@ -241,31 +228,26 @@ clean_iptables(){
   [ -t 1 ] && send_log "clean iptables"
 
   iptables -t raw -D ${JUMP}
-  
+
   iptables -t raw -F "${DROP_TARGET}"
   iptables -t raw -X "${DROP_TARGET}"
-  exit 0
 }
 
 cleanup(){
   [ -t 1 ] && send_log "cleanup"
   ipset ${DESTROY} ${PREFIX}.tmp
-  rm ${BLOCKLIST_FILE}
-  rm ${TMP_DIR}
+  cd /tmp
+  # rm -rf ${TMP_DIR}
 }
 
 main(){
   send_log "Begin Processing"
-
-  clean_iptables
 
   get_lists
   get_countries
 
   ipset_all_ip
   ipset_all_cidr
-
-  cleanup
 
   send_log "End Processing"
 }
