@@ -129,12 +129,16 @@ get_countries(){
     echo "file: $file"
 
     ipset destroy $name.zone
+    ipset create tmp.zone hash:net
     ipset create $name.zone hash:net
 
     for IP in $(cat $file)
     do
-      ipset add $name.zone $IP
+      ipset add tmp.zone $IP
     done
+
+    ipset ${SWAP} tmp.zone $name.zone
+    ipset ${DESTROY} tmp.zone
 
     if echo $name | grep -q ${ZONE_ALLOW}; then
       iptables -t raw -I ${DROP_TARGET} -m set --match-set $name.zone src -j RETURN
@@ -167,7 +171,7 @@ init(){
   check_root
   clean_iptables
   init_ipset
-  load_ipset
+  init_ipset
 
   create_chain "${DROP_TARGET}"
   create_jump "${DROP_TARGET}"
@@ -180,11 +184,11 @@ ipset_all_cidr(){
   CHAIN_TARGET=${DROP_TARGET}
 
   ipset -q ${CREATE} ${IPSET_NAME} ${NETHASH}
-  ipset -q ${DESTROY} ${PREFIX}.tmp
+  ipset -q ${DESTROY} tmp.zone
 
-  (echo "${CREATE} ${PREFIX}.tmp ${NETHASH}"
-  sed -n "/\//s/^/$ADD ${PREFIX}.tmp /p" ${IPSET_FILE}
-  echo "COMMIT") | nice -n 15 ipset ${RESTORE} && ipset ${SWAP} ${PREFIX}.tmp ${IPSET_NAME}
+  (echo "${CREATE} tmp.zone ${NETHASH}"
+  sed -n "/\//s/^/$ADD tmp.zone /p" ${IPSET_FILE}
+  echo "COMMIT") | nice -n 15 ipset ${RESTORE} && ipset ${SWAP} tmp.zone ${IPSET_NAME}
   iptables -t raw -nL ${DROP_TARGET} | grep -q ${IPSET_NAME} || \
     iptables -t raw -I ${DROP_TARGET} \
     -m set ${MATCH_SET} ${IPSET_NAME} src \
@@ -209,11 +213,11 @@ ipset_all_ip(){
     ipset -q ${CREATE} ${PREFIX}IP${setCount} ${IPHASH}
     ipset -q ${DESTROY} ${PREFIX}.tmp
 
-    (echo "${CREATE} ${PREFIX}.tmp ${IPHASH}"
+    (echo "${CREATE} tmp.zone ${IPHASH}"
     sed -n "/\//!p" ${BLOCKLIST_FILE} | \
       sed -n "$(((( setCount - 1) * IPSET_MAX) + 1)),$(( setCount * IPSET_MAX )) s/^/$ADD ${PREFIX}.tmp /p"
     echo "COMMIT") | nice -n 15 ipset ${RESTORE} && \
-      ipset ${SWAP} ${PREFIX}.tmp ${PREFIX}IP${setCount}
+      ipset ${SWAP} tmp.zone ${PREFIX}IP${setCount}
 
     iptables -t raw -nL ${DROP_TARGET} | grep -q ${PREFIX}IP${setCount} || \
       iptables -t raw -I ${DROP_TARGET} -m set ${MATCH_SET} ${PREFIX}IP${setCount} src -j DROP
@@ -235,9 +239,9 @@ clean_iptables(){
 
 cleanup(){
   [ -t 1 ] && send_log "cleanup"
-  ipset ${DESTROY} ${PREFIX}.tmp
+  ipset destroy tmp.zone
   cd /tmp
-  # rm -rf ${TMP_DIR}
+  # rm -rf "${TMP_DIR}"
 }
 
 main(){
@@ -249,13 +253,15 @@ main(){
   ipset_all_ip
   ipset_all_cidr
 
+  cleanup
+
   send_log "End Processing"
 }
 
 set -x
 if [ "$1" = "clean" ]; then
   clean_iptables
-  load_ipset
+  init_ipset
   exit 0
 fi
 
